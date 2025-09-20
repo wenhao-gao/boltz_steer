@@ -37,6 +37,11 @@ cd boltz; pip install -e .[cuda]
 
 If you are installing on CPU-only or non-CUDA GPus hardware, remove `[cuda]` from the above commands. Note that the CPU version is significantly slower than the GPU version.
 
+## Usage
+
+- Run with Slurm: `sbatch run_boltz_inference.slurm`
+- Analyze results: `python -m scripts.eval.run_physicalsim_metrics outputs/posebusters_steer --num-workers 32`
+
 ## Inference
 
 You can run inference using Boltz with:

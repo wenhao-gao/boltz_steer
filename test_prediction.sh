@@ -1,21 +1,32 @@
 #!/bin/bash
 
-# Run the prediction
-# CUDA_VISIBLE_DEVICES=6,7 boltz predict examples/test/pb_subset \
+# CUDA_VISIBLE_DEVICES=5 boltz predict inputs/test \
 #     --override \
-#     --use_msa_server \
 #     --accelerator gpu \
-#     --devices 2 \
-#     --out_dir test_pb_subset \
-#     --output_format mmcif 
+#     --devices 1 \
+#     --out_dir outputs/test_boltz \
+#     --steering_strategy no_steering \
+#     --output_format mmcif
 
-# Run the prediction
-CUDA_VISIBLE_DEVICES=7 boltz predict examples/test/pb_subset/8slg.yaml \
+# CUDA_VISIBLE_DEVICES=5 boltz predict inputs/test \
+#     --override \
+#     --accelerator gpu \
+#     --devices 1 \
+#     --out_dir outputs/test_boltz_steer \
+#     --steering_strategy boltz \
+#     --output_format mmcif
+
+CUDA_VISIBLE_DEVICES=5 boltz predict inputs/test \
     --override \
     --accelerator gpu \
     --devices 1 \
-    --out_dir test_pb_subset \
-    --output_format mmcif 
+    --out_dir outputs/test_boltz_fks \
+    --steering_strategy fks \
+    --output_format mmcif
+
+python -m scripts.eval.run_physicalsim_metrics outputs/test_boltz --num-workers 16
+python -m scripts.eval.run_physicalsim_metrics outputs/test_boltz_steer --num-workers 16
+python -m scripts.eval.run_physicalsim_metrics outputs/test_boltz_fks --num-workers 16
 
 # Check the output
 if [ $? -eq 0 ]; then

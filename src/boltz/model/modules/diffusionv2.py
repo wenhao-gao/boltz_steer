@@ -33,7 +33,7 @@ from boltz.model.modules.utils import (
     log,
 )
 from boltz.model.potentials.potentials import get_potentials
-
+from ipdb import set_trace as st
 
 class DiffusionModule(Module):
     """Diffusion module"""
@@ -301,14 +301,21 @@ class AtomDiffusion(Module):
         steering_args=None,
         **network_condition_kwargs,
     ):
+
+        # Set up potentials
         if steering_args is not None and (
             steering_args["fk_steering"]
-            or steering_args["physical_guidance_update"]
-            or steering_args["contact_guidance_update"]
+            or steering_args["gbd_steering"]
+            or steering_args["vm_steering"]
         ):
             potentials = get_potentials(steering_args, boltz2=True)
 
-        if steering_args["fk_steering"]:
+        # Configure particle count & buffers
+        if steering_args is not None and (
+            steering_args["fk_steering"]
+            or steering_args["gbd_steering"]
+            or steering_args["vm_steering"]
+        ):
             multiplicity = multiplicity * steering_args["num_particles"]
             energy_traj = torch.empty((multiplicity, 0), device=self.device)
             resample_weights = torch.ones(multiplicity, device=self.device).reshape(
@@ -317,6 +324,8 @@ class AtomDiffusion(Module):
         if (
             steering_args["physical_guidance_update"]
             or steering_args["contact_guidance_update"]
+            or steering_args["gbd_steering"]
+            or steering_args["vm_steering"]
         ):
             scaled_guidance_update = torch.zeros(
                 (multiplicity, *atom_mask.shape[1:], 3),
@@ -326,6 +335,7 @@ class AtomDiffusion(Module):
         if max_parallel_samples is None:
             max_parallel_samples = multiplicity
 
+        # Noise schedule & masks
         num_sampling_steps = default(num_sampling_steps, self.num_sampling_steps)
         atom_mask = atom_mask.repeat_interleave(multiplicity, 0)
 
@@ -348,6 +358,8 @@ class AtomDiffusion(Module):
 
         # gradually denoise
         for step_idx, (sigma_tm, sigma_t, gamma) in enumerate(sigmas_and_gammas):
+            
+            # Random SE(3) augmentation
             random_R, random_tr = compute_random_augmentation(
                 multiplicity, device=atom_coords.device, dtype=atom_coords.dtype
             )
@@ -355,12 +367,14 @@ class AtomDiffusion(Module):
             atom_coords = (
                 torch.einsum("bmd,bds->bms", atom_coords, random_R) + random_tr
             )
+            # If we already have atom_coords_denoised, transform it the same way.
             if atom_coords_denoised is not None:
                 atom_coords_denoised -= atom_coords_denoised.mean(dim=-2, keepdims=True)
                 atom_coords_denoised = (
                     torch.einsum("bmd,bds->bms", atom_coords_denoised, random_R)
                     + random_tr
                 )
+            # If we have scaled_guidance_update, transform it the same way.
             if (
                 steering_args["physical_guidance_update"]
                 or steering_args["contact_guidance_update"]
@@ -371,12 +385,14 @@ class AtomDiffusion(Module):
 
             sigma_tm, sigma_t, gamma = sigma_tm.item(), sigma_t.item(), gamma.item()
 
+            # Compute step scalars
             t_hat = sigma_tm * (1 + gamma)
             steering_t = 1.0 - (step_idx / num_sampling_steps)
             noise_var = self.noise_scale**2 * (t_hat**2 - sigma_tm**2)
             eps = sqrt(noise_var) * torch.randn(shape, device=self.device)
             atom_coords_noisy = atom_coords + eps
 
+            # Denoise
             with torch.no_grad():
                 atom_coords_denoised = torch.zeros_like(atom_coords_noisy)
                 sample_ids = torch.arange(multiplicity).to(atom_coords_noisy.device)
@@ -395,6 +411,7 @@ class AtomDiffusion(Module):
                     )
                     atom_coords_denoised[sample_ids_chunk] = atom_coords_denoised_chunk
 
+                # Compute resampling weights, if we are using FK steering
                 if steering_args["fk_steering"] and (
                     (
                         step_idx % steering_args["fk_resampling_interval"] == 0
@@ -415,7 +432,7 @@ class AtomDiffusion(Module):
                             energy += parameters["resampling_weight"] * component_energy
                     energy_traj = torch.cat((energy_traj, energy.unsqueeze(1)), dim=1)
 
-                    # Compute log G values
+                    # Compute log-G increment
                     if step_idx == 0:
                         log_G = -1 * energy
                     else:
@@ -440,7 +457,7 @@ class AtomDiffusion(Module):
                         dim=1,
                     )
 
-                # Compute guidance update to x_0 prediction
+                # Compute guidance update to x_0 prediction, Energy-based guidance update (if physical/contact)
                 if (
                     steering_args["physical_guidance_update"]
                     or steering_args["contact_guidance_update"]
@@ -472,6 +489,7 @@ class AtomDiffusion(Module):
                         / t_hat
                     )
 
+                # Perform resampling in FK steering
                 if steering_args["fk_steering"] and (
                     (
                         step_idx % steering_args["fk_resampling_interval"] == 0
@@ -509,6 +527,7 @@ class AtomDiffusion(Module):
                     if token_repr is not None:
                         token_repr = token_repr[resample_indices]
 
+            # Align noisy atom coords to denoised atom coords
             if self.alignment_reverse_diff:
                 with torch.autocast("cuda", enabled=False):
                     atom_coords_noisy = weighted_rigid_align(
@@ -520,10 +539,17 @@ class AtomDiffusion(Module):
 
                 atom_coords_noisy = atom_coords_noisy.to(atom_coords_denoised)
 
+            # Compute denoised over sigma
             denoised_over_sigma = (atom_coords_noisy - atom_coords_denoised) / t_hat
             atom_coords_next = (
                 atom_coords_noisy + step_scale * (sigma_t - t_hat) * denoised_over_sigma
             )
+
+            # print(f"step_idx: {step_idx}, "
+            #       f"step_scale: {step_scale}, "
+            #       f"sigma_t: {sigma_t}, "
+            #       f"gamma: {gamma}, "
+            #       f"t_hat: {t_hat}")
 
             atom_coords = atom_coords_next
 

@@ -145,16 +145,111 @@ class Boltz2DiffusionParams:
 
 
 @dataclass
-class BoltzSteeringParams:
+class BoltzSteeringParamsNoSteering:
     """Steering parameters."""
 
     fk_steering: bool = False
-    num_particles: int = 3
+    gbd_steering: bool = False
+    vm_steering: bool = False
+    num_particles: int = 5
     fk_lambda: float = 4.0
     fk_resampling_interval: int = 3
     physical_guidance_update: bool = False
+    contact_guidance_update: bool = False
+    num_gd_steps: int = 20
+
+
+@dataclass
+class BoltzSteeringParams:
+    """Steering parameters."""
+
+    fk_steering: bool = True
+    gbd_steering: bool = False
+    vm_steering: bool = False
+    num_particles: int = 5
+    fk_lambda: float = 4.0
+    fk_resampling_interval: int = 3
+    physical_guidance_update: bool = True
     contact_guidance_update: bool = True
     num_gd_steps: int = 20
+
+
+@dataclass
+class SteeringParamsFKS:
+    """Steering parameters."""
+
+    fk_steering: bool = True
+    gbd_steering: bool = False
+    vm_steering: bool = False
+    num_particles: int = 5
+    fk_lambda: float = 4.0
+    fk_resampling_interval: int = 3
+    physical_guidance_update: bool = False
+    contact_guidance_update: bool = False
+    num_gd_steps: int = 20
+
+
+@dataclass
+class SteeringParamsGBD:
+    """Steering parameters."""
+
+    fk_steering: bool = False
+    gbd_steering: bool = True
+    vm_steering: bool = False
+    num_particles: int = 5
+    fk_lambda: float = 4.0
+    fk_resampling_interval: int = 3
+    physical_guidance_update: bool = False
+    contact_guidance_update: bool = False
+    num_gd_steps: int = 20
+
+    
+@dataclass
+class SteeringParamsVM:
+    """Steering parameters."""
+
+    fk_steering: bool = False
+    gbd_steering: bool = False
+    vm_steering: bool = True
+    num_particles: int = 5
+    fk_lambda: float = 4.0
+    fk_resampling_interval: int = 3
+    physical_guidance_update: bool = False
+    contact_guidance_update: bool = False
+    num_gd_steps: int = 20
+
+
+def get_steering_params(strategy: str) -> dict:
+    """Get steering parameters based on strategy name.
+    
+    Parameters
+    ----------
+    strategy : str
+        The steering strategy name. Options: 'no_steering', 'boltz', 'fks', 'gbd', 'vm'.
+        
+    Returns
+    -------
+    dict
+        Dictionary of steering parameters.
+        
+    Raises
+    ------
+    ValueError
+        If strategy is not supported.
+    """
+    strategy_map = {
+        "no_steering": BoltzSteeringParamsNoSteering(),
+        "boltz": BoltzSteeringParams(),
+        "fks": SteeringParamsFKS(),
+        "gbd": SteeringParamsGBD(),
+        "vm": SteeringParamsVM(),
+    }
+    
+    if strategy not in strategy_map:
+        available = list(strategy_map.keys())
+        raise ValueError(f"Unknown steering strategy '{strategy}'. Available: {available}")
+    
+    return asdict(strategy_map[strategy])
 
 
 @rank_zero_only
@@ -1039,6 +1134,12 @@ def cli() -> None:
     is_flag=True,
     help=" to dump the s and z embeddings into a npz file. Default is False.",
 )
+@click.option(
+    "--steering_strategy",
+    type=click.Choice(["no_steering", "boltz", "fks", "gbd", "vm"]),
+    help="The steering strategy to use for prediction. Options: 'no_steering', 'boltz' (BoltzSteeringParams), 'fks' (FK Steering), 'fkc' (FK Contact), 'vm' (VM). Default is 'default'.",
+    default="no_steering",
+)
 def predict(  # noqa: C901, PLR0915, PLR0912
     data: str,
     out_dir: str,
@@ -1077,6 +1178,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     num_subsampled_msa: int = 1024,
     no_kernels: bool = False,
     write_embeddings: bool = False,
+    steering_strategy: Literal["no_steering", "boltz", "fks", "gbd", "vm"] = "no_steering",
 ) -> None:
     """Run predictions with Boltz."""
     # If cpu, write a friendly warning
@@ -1306,9 +1408,9 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             "write_full_pde": write_full_pde,
         }
 
-        steering_args = BoltzSteeringParams()
-        steering_args.fk_steering = use_potentials
-        steering_args.physical_guidance_update = use_potentials
+        # Get steering parameters based on strategy
+        steering_args_dict = get_steering_params(steering_strategy)
+        # steering_args = BoltzSteeringParams(**steering_args_dict)
 
         model_cls = Boltz2 if model == "boltz2" else Boltz1
         model_module = model_cls.load_from_checkpoint(
@@ -1321,7 +1423,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             use_kernels=not no_kernels,
             pairformer_args=asdict(pairformer_args),
             msa_args=asdict(msa_args),
-            steering_args=asdict(steering_args),
+            steering_args=steering_args_dict,
         )
         model_module.eval()
 
@@ -1383,7 +1485,11 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         if affinity_checkpoint is None:
             affinity_checkpoint = cache / "boltz2_aff.ckpt"
 
-        steering_args = BoltzSteeringParams()
+        # Get steering parameters based on strategy for affinity predictions
+        steering_args = get_steering_params(steering_strategy)
+        # steering_args = BoltzSteeringParams(**steering_args_dict)
+        
+        # Override for affinity predictions (disable steering)
         steering_args.fk_steering = False
         steering_args.physical_guidance_update = False
         steering_args.contact_guidance_update = False

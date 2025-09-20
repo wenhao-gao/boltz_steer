@@ -10,6 +10,7 @@ from boltz.model.potentials.schedules import (
     PiecewiseStepFunction,
 )
 from boltz.model.loss.diffusionv2 import weighted_rigid_align
+from ipdb import set_trace as st
 
 
 class Potential(ABC):
