@@ -22,6 +22,12 @@ class Potential(ABC):
     ):
         self.parameters = parameters
 
+    @torch.no_grad()
+    def _rademacher_like(self, x: torch.Tensor) -> torch.Tensor:
+        """Sample ±1 entries matching the shape/device/dtype of x."""
+        v = torch.empty_like(x).bernoulli_(0.5).mul_(2).add_(-1)
+        return v
+
     def compute(self, coords, feats, parameters):
         index, args, com_args, ref_args, operator_args = self.compute_args(
             feats, parameters
@@ -199,6 +205,70 @@ class Potential(ABC):
             grad_atom = grad_atom[..., ref_token_index, :]
 
         return grad_atom
+
+    def compute_laplacian(
+        self,
+        coords: torch.Tensor,
+        feats,
+        parameters,
+        num_samples: int = 1,
+        distribution: str = "rademacher",
+    ) -> torch.Tensor:
+        """
+        Hutchinson trace estimator for the Laplacian (trace of the Hessian). (NOT USED)
+
+        Args:
+            coords: input coordinates, shape (*B, N, 3)
+            feats: features forwarded to compute
+            parameters: parameters forwarded to compute
+            num_samples: probe vectors used for variance reduction
+            distribution: "rademacher" (default) or "gaussian"
+
+        Returns:
+            Tensor of shape (*B,) with Laplacian estimates per batch entry.
+        """
+
+        x = coords.detach().clone().requires_grad_(True)
+        energy = self.compute(x, feats, parameters)
+
+        if not energy.requires_grad:
+            return torch.zeros_like(x)
+
+        energy_sum = energy.sum()
+        (grad,) = torch.autograd.grad(
+            energy_sum,
+            x,
+            create_graph=True,
+            retain_graph=True,
+            allow_unused=True,
+        )
+
+        if grad is None:
+            return torch.zeros_like(x)
+
+        lap = torch.zeros_like(x)
+
+        for sample_idx in range(num_samples):
+            if distribution == "gaussian":
+                v = torch.randn_like(x)
+            else:
+                v = self._rademacher_like(x)
+
+            (hvp,) = torch.autograd.grad(
+                (grad * v).sum(),
+                x,
+                retain_graph=sample_idx < num_samples - 1,
+                create_graph=False,
+                allow_unused=True,
+            )
+
+            if hvp is None:
+                continue
+
+            lap = lap + v * hvp
+
+        lap = lap / float(num_samples)
+        return lap.detach()
 
     def compute_parameters(self, t):
         if self.parameters is None:
@@ -670,7 +740,11 @@ class ContactPotentital(FlatBottomPotential, DistancePotential):
 
 def get_potentials(steering_args, boltz2=False):
     potentials = []
-    if steering_args["fk_steering"] or steering_args["physical_guidance_update"]:
+    if (
+        steering_args["fk_steering"] 
+        or steering_args["gbd_steering"] 
+        or steering_args["vm_steering"]
+    ):
         potentials.extend(
             [
                 SymmetricChainCOMPotential(
@@ -754,7 +828,10 @@ def get_potentials(steering_args, boltz2=False):
             ]
         )
     if boltz2 and (
-        steering_args["fk_steering"] or steering_args["contact_guidance_update"]
+        steering_args["fk_steering"] 
+        or steering_args["contact_guidance_update"]
+        or steering_args["gbd_steering"]
+        or steering_args["vm_steering"]
     ):
         potentials.extend(
             [

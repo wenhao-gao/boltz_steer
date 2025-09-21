@@ -183,40 +183,41 @@ class SteeringParamsFKS:
     vm_steering: bool = False
     num_particles: int = 5
     fk_lambda: float = 4.0
-    fk_resampling_interval: int = 3
-    physical_guidance_update: bool = False
-    contact_guidance_update: bool = False
-    num_gd_steps: int = 20
+    fk_resampling_interval: int = 1
+    physical_guidance_update: bool = True
+    contact_guidance_update: bool = True
+    num_gd_steps: int = 0
 
 
 @dataclass
 class SteeringParamsGBD:
     """Steering parameters."""
 
-    fk_steering: bool = False
+    fk_steering: bool = True
     gbd_steering: bool = True
     vm_steering: bool = False
     num_particles: int = 5
     fk_lambda: float = 4.0
-    fk_resampling_interval: int = 3
-    physical_guidance_update: bool = False
-    contact_guidance_update: bool = False
-    num_gd_steps: int = 20
+    fk_resampling_interval: int = 1
+    physical_guidance_update: bool = True
+    contact_guidance_update: bool = True
+    num_gd_steps: int = 0
 
     
+
 @dataclass
 class SteeringParamsVM:
     """Steering parameters."""
 
-    fk_steering: bool = False
+    fk_steering: bool = True
     gbd_steering: bool = False
     vm_steering: bool = True
     num_particles: int = 5
     fk_lambda: float = 4.0
-    fk_resampling_interval: int = 3
-    physical_guidance_update: bool = False
-    contact_guidance_update: bool = False
-    num_gd_steps: int = 20
+    fk_resampling_interval: int = 1
+    physical_guidance_update: bool = True
+    contact_guidance_update: bool = True
+    num_gd_steps: int = 0
 
 
 def get_steering_params(strategy: str) -> dict:

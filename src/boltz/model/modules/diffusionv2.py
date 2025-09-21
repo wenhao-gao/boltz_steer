@@ -411,6 +411,8 @@ class AtomDiffusion(Module):
                     )
                     atom_coords_denoised[sample_ids_chunk] = atom_coords_denoised_chunk
 
+                score = (atom_coords_denoised - atom_coords_noisy) / t_hat**2
+
                 # Compute resampling weights, if we are using FK steering
                 if steering_args["fk_steering"] and (
                     (
@@ -432,11 +434,15 @@ class AtomDiffusion(Module):
                             energy += parameters["resampling_weight"] * component_energy
                     energy_traj = torch.cat((energy_traj, energy.unsqueeze(1)), dim=1)
 
-                    # Compute log-G increment
                     if step_idx == 0:
-                        log_G = -1 * energy
-                    else:
-                        log_G = energy_traj[:, -2] - energy_traj[:, -1]
+                        log_G = torch.zeros_like(energy)
+
+                    # Compute log-G increment
+                    if not (steering_args["gbd_steering"] or steering_args["vm_steering"]):
+                        if step_idx == 0:
+                            log_G = -1 * energy
+                        else:
+                            log_G = energy_traj[:, -2] - energy_traj[:, -1]
 
                     # Compute ll difference between guided and unguided transition distribution
                     if (
@@ -448,6 +454,66 @@ class AtomDiffusion(Module):
                         ).sum(dim=(-1, -2)) / (2 * noise_var)
                     else:
                         ll_difference = torch.zeros_like(energy)
+
+                    if steering_args["gbd_steering"] or steering_args["vm_steering"]:
+
+                        energy_gradient = torch.zeros_like(atom_coords_denoised)
+                        for potential in potentials:
+                            parameters = potential.compute_parameters(steering_t)
+                            if parameters["guidance_weight"] > 0:
+                                energy_gradient += parameters[
+                                    "guidance_weight"
+                                ] * potential.compute_gradient(
+                                    atom_coords_denoised,
+                                    network_condition_kwargs["feats"],
+                                    parameters,
+                                )
+
+                        energy_gradient_1 = torch.zeros_like(atom_coords_denoised)
+                        delta_x = 0.1 * torch.ones(shape, device=self.device)
+                        for potential in potentials:
+                            parameters = potential.compute_parameters(steering_t)
+                            if parameters["guidance_weight"] > 0:
+                                energy_gradient_1 += parameters[
+                                    "guidance_weight"
+                                ] * potential.compute_gradient(
+                                    atom_coords_denoised + delta_x,
+                                    network_condition_kwargs["feats"],
+                                    parameters,
+                                )
+
+                        energy_laplacian = (energy_gradient_1 - energy_gradient) / delta_x
+                        energy_laplacian = energy_laplacian.sum(dim=-1).sum(dim=-1)
+
+                    #     energy_laplacian_rademacher = torch.zeros_like(atom_coords_denoised)
+                    #     for potential in potentials:
+                    #         parameters = potential.compute_parameters(steering_t)
+                    #         if parameters["guidance_weight"] > 0:
+                    #             energy_laplacian_rademacher += parameters[
+                    #                 "guidance_weight"
+                    #             ] * potential.compute_laplacian(
+                    #                 atom_coords_denoised,
+                    #                 network_condition_kwargs["feats"],
+                    #                 parameters,
+                    #             )
+                    #     energy_laplacian_rademacher = energy_laplacian_rademacher.sum(dim=-1).sum(dim=-1)
+
+                    # print(energy_laplacian)
+                    # print(energy_laplacian_rademacher)
+                    
+                    if steering_args["gbd_steering"]:
+                        log_G_t = - 2 * energy / t_hat**3 - 0.5 * energy * energy_laplacian \
+                            - torch.einsum("ij,ij->i", energy_gradient.reshape(len(energy), -1), score.reshape(len(energy), -1)) \
+                            + 0.5 * steering_args["fk_lambda"] * torch.einsum("ij,ij->i", energy_gradient.reshape(len(energy), -1), energy_gradient.reshape(len(energy), -1))
+
+                        log_G += log_G_t - log_G_t.mean()
+
+                    if steering_args["vm_steering"]:
+                        log_G_t = - 2 * energy / t_hat**3 - 0.5 * energy * energy_laplacian \
+                            - torch.einsum("ij,ij->i", energy_gradient.reshape(len(energy), -1), score.reshape(len(energy), -1)) \
+                            + 0.5 * steering_args["fk_lambda"] * torch.einsum("ij,ij->i", energy_gradient.reshape(len(energy), -1), energy_gradient.reshape(len(energy), -1))
+
+                        log_G += log_G_t - log_G_t.mean()
 
                     # Compute resampling weights
                     resample_weights = F.softmax(
@@ -540,10 +606,21 @@ class AtomDiffusion(Module):
                 atom_coords_noisy = atom_coords_noisy.to(atom_coords_denoised)
 
             # Compute denoised over sigma
-            denoised_over_sigma = (atom_coords_noisy - atom_coords_denoised) / t_hat
-            atom_coords_next = (
-                atom_coords_noisy + step_scale * (sigma_t - t_hat) * denoised_over_sigma
-            )
+            if steering_args["gbd_steering"]:
+                denoised_over_sigma = (atom_coords_noisy - atom_coords_denoised) / t_hat
+                atom_coords_next = (
+                    atom_coords_noisy - energy_gradient + step_scale * (sigma_t - t_hat) * denoised_over_sigma
+                )
+            elif steering_args["vm_steering"]:
+                denoised_over_sigma = (atom_coords_noisy - atom_coords_denoised) / t_hat
+                atom_coords_next = (
+                    atom_coords_noisy - energy_gradient + step_scale * (sigma_t - t_hat) * denoised_over_sigma
+                )
+            else:
+                denoised_over_sigma = (atom_coords_noisy - atom_coords_denoised) / t_hat
+                atom_coords_next = (
+                    atom_coords_noisy + step_scale * (sigma_t - t_hat) * denoised_over_sigma
+                )
 
             # print(f"step_idx: {step_idx}, "
             #       f"step_scale: {step_scale}, "
