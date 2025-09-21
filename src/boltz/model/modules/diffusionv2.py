@@ -35,6 +35,10 @@ from boltz.model.modules.utils import (
 from boltz.model.potentials.potentials import get_potentials
 from ipdb import set_trace as st
 
+
+NUM_MIN = 1e-8
+
+
 class DiffusionModule(Module):
     """Diffusion module"""
 
@@ -509,12 +513,28 @@ class AtomDiffusion(Module):
 
                         log_G += log_G_t - log_G_t.mean()
 
+                    h = None
+                    g = None
                     if steering_args["vm_steering"]:
                         log_G_t = - 2 * energy / t_hat**3 - 0.5 * energy * energy_laplacian \
                             - torch.einsum("ij,ij->i", energy_gradient.reshape(len(energy), -1), score.reshape(len(energy), -1)) \
                             + 0.5 * steering_args["fk_lambda"] * torch.einsum("ij,ij->i", energy_gradient.reshape(len(energy), -1), energy_gradient.reshape(len(energy), -1))
 
-                        log_G += log_G_t - log_G_t.mean()
+                        h = - steering_args["fk_lambda"] \
+                            * (torch.einsum("ij,ij->i", (score - steering_args["fk_lambda"] * energy_gradient / t_hat**2).reshape(len(energy), -1), energy_gradient.reshape(len(energy), -1)) + energy_laplacian)
+                            # * (torch.einsum("ij,ij->i", (score - steering_args["fk_lambda"] * energy_gradient / t_hat**2).reshape(len(energy), -1), energy_gradient.reshape(len(energy), -1)) + energy_laplacian) / t_hat**2
+                        g = log_G_t - log_G_t.mean()
+                        
+                        log_G += g + h
+                        theta = - (g*h).mean() / ((h*h).mean() + NUM_MIN)
+
+                        print(f"theta: {theta}, "
+                            f"(g*h).mean(): {(g*h).mean()}, "
+                            f"(h*h).mean(): {(h*h).mean()}, "
+                            f"h: {h}, "
+                            f"g: {g}, "
+                            f"t_hat: {t_hat}, "
+                        )
 
                     # Compute resampling weights
                     resample_weights = F.softmax(
@@ -595,6 +615,10 @@ class AtomDiffusion(Module):
                         token_repr = token_repr[resample_indices]
                     if energy_gradient is not None:
                         energy_gradient = energy_gradient[resample_indices]
+                    if h is not None:
+                        h = h[resample_indices]
+                    if g is not None:
+                        g = g[resample_indices]
 
             # Align noisy atom coords to denoised atom coords
             if self.alignment_reverse_diff:
@@ -615,7 +639,9 @@ class AtomDiffusion(Module):
                     atom_coords_noisy + step_scale * (t_hat - sigma_t) * denoised_over_sigma
                 )
             elif steering_args["vm_steering"]:
-                denoised_over_sigma = (atom_coords_denoised - atom_coords_noisy) / t_hat - steering_args["fk_lambda"] * energy_gradient / t_hat
+                theta = - (g*h).mean() / (h*h).mean()
+                # print(theta)
+                denoised_over_sigma = (atom_coords_denoised - atom_coords_noisy) / t_hat - (1 + theta / t_hat) * steering_args["fk_lambda"] * energy_gradient / t_hat
                 atom_coords_next = (
                     atom_coords_noisy + step_scale * (t_hat - sigma_t) * denoised_over_sigma
                 )
