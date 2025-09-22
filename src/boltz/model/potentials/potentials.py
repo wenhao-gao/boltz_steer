@@ -211,11 +211,11 @@ class Potential(ABC):
         coords: torch.Tensor,
         feats,
         parameters,
-        num_samples: int = 1,
+        num_samples: int = 20,
         distribution: str = "rademacher",
     ) -> torch.Tensor:
         """
-        Hutchinson trace estimator for the Laplacian (trace of the Hessian). (NOT USED)
+        Hutchinson trace estimator for the Laplacian (trace of the Hessian).
 
         Args:
             coords: input coordinates, shape (*B, N, 3)
@@ -232,7 +232,7 @@ class Potential(ABC):
         energy = self.compute(x, feats, parameters)
 
         if not energy.requires_grad:
-            return torch.zeros_like(x)
+            return torch.zeros(energy.shape, device=energy.device)
 
         energy_sum = energy.sum()
         (grad,) = torch.autograd.grad(
@@ -244,9 +244,9 @@ class Potential(ABC):
         )
 
         if grad is None:
-            return torch.zeros_like(x)
+            return torch.zeros(energy.shape, device=energy.device)
 
-        lap = torch.zeros_like(x)
+        lap = torch.zeros(energy.shape, device=energy.device)
 
         for sample_idx in range(num_samples):
             if distribution == "gaussian":
@@ -265,9 +265,10 @@ class Potential(ABC):
             if hvp is None:
                 continue
 
-            lap = lap + v * hvp
+            lap = lap + (v * hvp).sum(dim=(-2, -1))
 
         lap = lap / float(num_samples)
+        # st()
         return lap.detach()
 
     def compute_parameters(self, t):

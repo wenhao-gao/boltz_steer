@@ -183,7 +183,7 @@ class SteeringParamsFKS:
     vm_steering: bool = False
     num_particles: int = 5
     fk_lambda: float = 4.0
-    fk_resampling_interval: int = 1
+    fk_resampling_interval: int = 99999
     physical_guidance_update: bool = True
     contact_guidance_update: bool = True
     num_gd_steps: int = 0
@@ -198,7 +198,7 @@ class SteeringParamsGBD:
     vm_steering: bool = False
     num_particles: int = 5
     fk_lambda: float = 4.0
-    fk_resampling_interval: int = 1
+    fk_resampling_interval: int = 99999
     physical_guidance_update: bool = True
     contact_guidance_update: bool = True
     num_gd_steps: int = 0
@@ -214,7 +214,7 @@ class SteeringParamsVM:
     vm_steering: bool = True
     num_particles: int = 5
     fk_lambda: float = 4.0
-    fk_resampling_interval: int = 1
+    fk_resampling_interval: int = 99999
     physical_guidance_update: bool = True
     contact_guidance_update: bool = True
     num_gd_steps: int = 0
