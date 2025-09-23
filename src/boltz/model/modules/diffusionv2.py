@@ -311,6 +311,8 @@ class AtomDiffusion(Module):
             steering_args["fk_steering"]
             or steering_args["gbd_steering"]
             or steering_args["vm_steering"]
+            or steering_args["physical_guidance_update"]
+            or steering_args["contact_guidance_update"]
         ):
             potentials = get_potentials(steering_args, boltz2=True)
 
@@ -433,14 +435,14 @@ class AtomDiffusion(Module):
                     energy_traj = torch.cat((energy_traj, energy.unsqueeze(1)), dim=1)
 
                     if step_idx == 0:
-                        log_G = torch.zeros_like(energy)
+                        log_W = torch.zeros_like(energy)
 
                     # Compute log-G increment
-                    if not (steering_args["gbd_steering"] or steering_args["vm_steering"]):
-                        if step_idx == 0:
-                            log_G = -1 * energy * steering_args["fk_lambda"]
-                        else:
-                            log_G = (energy_traj[:, -2] - energy_traj[:, -1]) * steering_args["fk_lambda"]
+                    # if not (steering_args["gbd_steering"] or steering_args["vm_steering"]):
+                    if step_idx == 0:
+                        log_G = -1 * energy * steering_args["fk_lambda"]
+                    else:
+                        log_G = (energy_traj[:, -2] - energy_traj[:, -1]) * steering_args["fk_lambda"]
 
                     # Compute ll difference between guided and unguided transition distribution
                     if (
@@ -468,22 +470,6 @@ class AtomDiffusion(Module):
                                     parameters,
                                 )
 
-                        # energy_gradient_1 = torch.zeros_like(atom_coords_denoised)
-                        # delta_x = 0.1 * torch.ones(shape, device=self.device)
-                        # for potential in potentials:
-                        #     parameters = potential.compute_parameters(steering_t)
-                        #     if parameters["guidance_weight"] > 0:
-                        #         energy_gradient_1 += parameters[
-                        #             "guidance_weight"
-                        #         ] * potential.compute_gradient(
-                        #             atom_coords_denoised + delta_x,
-                        #             network_condition_kwargs["feats"],
-                        #             parameters,
-                        #         )
-
-                        # energy_laplacian = (energy_gradient_1 - energy_gradient) / delta_x
-                        # energy_laplacian = energy_laplacian.sum(dim=-1).sum(dim=-1)
-
                         energy_laplacian = torch.zeros_like(energy)
                         for potential in potentials:
                             parameters = potential.compute_parameters(steering_t)
@@ -497,37 +483,40 @@ class AtomDiffusion(Module):
                                 )
                     
                     if steering_args["gbd_steering"]:
-                        log_G_t = - 2 * energy / t_hat**3 - energy_laplacian / t_hat \
-                            - 2 * torch.einsum("ij,ij->i", energy_gradient.reshape(len(energy), -1), score.reshape(len(energy), -1)) / t_hat \
-                            + steering_args["fk_lambda"] * torch.einsum("ij,ij->i", energy_gradient.reshape(len(energy), -1), energy_gradient.reshape(len(energy), -1)) / t_hat**3
-                        log_G_t = log_G_t * steering_args["fk_lambda"]
+                        log_W_t = - energy_laplacian - 2 * torch.einsum("ij,ij->i", energy_gradient.reshape(len(energy), -1), score.reshape(len(energy), -1)) \
+                            + steering_args["fk_lambda"] * torch.einsum("ij,ij->i", energy_gradient.reshape(len(energy), -1), energy_gradient.reshape(len(energy), -1))
+                        log_W_t = log_W_t * steering_args["fk_lambda"] * t_hat
 
-                        log_G += (log_G_t - log_G_t @ F.softmax(log_G)) * (t_hat - sigma_t)
+                        log_W += (log_W_t - log_W_t.mean()) * (t_hat - sigma_t)
 
                     h = None
                     g = None
                     if steering_args["vm_steering"]:
                         W = F.softmax(log_G)
-                        log_G_t = - 2 * energy / t_hat**3 - energy_laplacian / t_hat \
-                            - 2 * torch.einsum("ij,ij->i", energy_gradient.reshape(len(energy), -1), score.reshape(len(energy), -1)) / t_hat \
-                            + steering_args["fk_lambda"] * torch.einsum("ij,ij->i", energy_gradient.reshape(len(energy), -1), energy_gradient.reshape(len(energy), -1)) / t_hat**3
-                        log_G_t = log_G_t * steering_args["fk_lambda"]
+                        log_W_t = - energy_laplacian - 2 * torch.einsum("ij,ij->i", energy_gradient.reshape(len(energy), -1), score.reshape(len(energy), -1)) \
+                            + steering_args["fk_lambda"] * torch.einsum("ij,ij->i", energy_gradient.reshape(len(energy), -1), energy_gradient.reshape(len(energy), -1))
+                        log_W_t = log_W_t * steering_args["fk_lambda"] * t_hat
 
-                        h_t = - steering_args["fk_lambda"] \
-                            * (torch.einsum("ij,ij->i", (score - steering_args["fk_lambda"] * energy_gradient / t_hat**2).reshape(len(energy), -1), energy_gradient.reshape(len(energy), -1)) + energy_laplacian) / t_hat
-                        g = log_G_t - log_G_t @ W
-                        h = h_t - h_t @ W
-                        theta = - ((g*h) @ W) / ((h*h) @ W + NUM_MIN)
+                        h_t = - steering_args["fk_lambda"] * t_hat \
+                            * (torch.einsum(
+                                "ij,ij->i", 
+                                (score - steering_args["fk_lambda"] * energy_gradient).reshape(len(energy), -1), 
+                                energy_gradient.reshape(len(energy), -1)
+                            ) + energy_laplacian)
+                        g = log_W_t - log_W_t.mean()
+                        h = h_t - h_t.mean()
+                        theta = - ((g*h).mean()) / ((h*h).mean() + NUM_MIN)
                         
-                        log_G += (g + theta * h) * (t_hat - sigma_t)
+                        log_W += (g + theta * h) * (t_hat - sigma_t)
                         
-                        print(f"theta: {theta}, "
-                            f"(g*h).mean(): {(g*h) @ W}, "
-                            f"(h*h).mean(): {(h*h) @ W}, "
-                            f"h: {h}, "
-                            f"g: {g}, "
-                            f"t_hat: {t_hat}, "
-                        )
+                        if step_idx % 40 == 0:
+                            print(f"theta: {theta}, "
+                                f"(g*h).mean(): {(g*h).mean()}, "
+                                f"(h*h).mean(): {(h*h).mean()}, "
+                                f"h: {h}, "
+                                f"g: {g}, "
+                                f"t_hat: {t_hat}, "
+                            )
 
                     # Compute resampling weights
                     resample_weights = F.softmax(
@@ -538,7 +527,7 @@ class AtomDiffusion(Module):
                     )
 
                 # Compute guidance update to x_0 prediction, Energy-based guidance update (if physical/contact)
-                if (
+                if not steering_args["fk_only"] and (
                     steering_args["physical_guidance_update"]
                     or steering_args["contact_guidance_update"]
                 ) and step_idx < num_sampling_steps - 1:
@@ -570,49 +559,50 @@ class AtomDiffusion(Module):
                     )
 
                 # Perform resampling in FK steering
-                # if steering_args["fk_steering"] and (
-                #     (
-                #         step_idx % steering_args["fk_resampling_interval"] == 200
-                #         and noise_var > 0
-                #     )
-                #     or step_idx == num_sampling_steps - 1
-                # ):
-                if (step_idx == num_sampling_steps - 1):
-                    resample_indices = (
-                        torch.multinomial(
-                            resample_weights,
-                            resample_weights.shape[1]
-                            if step_idx < num_sampling_steps - 1
-                            else 1,
-                            replacement=True,
-                        )
-                        + resample_weights.shape[1]
-                        * torch.arange(
-                            resample_weights.shape[0], device=resample_weights.device
-                        ).unsqueeze(-1)
-                    ).flatten()
+                if steering_args["fk_steering"] and (
+                    (
+                        step_idx % steering_args["fk_resampling_interval"] == 0
+                        and noise_var > 0
+                    )
+                    or step_idx == num_sampling_steps - 1
+                ):
+                
+                    if not steering_args["gg_only"] or step_idx == num_sampling_steps - 1: 
+                        resample_indices = (
+                            torch.multinomial(
+                                resample_weights,
+                                resample_weights.shape[1]
+                                if step_idx < num_sampling_steps - 1
+                                else 1,
+                                replacement=True,
+                            )
+                            + resample_weights.shape[1]
+                            * torch.arange(
+                                resample_weights.shape[0], device=resample_weights.device
+                            ).unsqueeze(-1)
+                        ).flatten()
 
-                    atom_coords = atom_coords[resample_indices]
-                    atom_coords_noisy = atom_coords_noisy[resample_indices]
-                    atom_mask = atom_mask[resample_indices]
-                    if atom_coords_denoised is not None:
-                        atom_coords_denoised = atom_coords_denoised[resample_indices]
-                    energy_traj = energy_traj[resample_indices]
-                    if (
-                        steering_args["physical_guidance_update"]
-                        or steering_args["contact_guidance_update"]
-                    ):
-                        scaled_guidance_update = scaled_guidance_update[
-                            resample_indices
-                        ]
-                    if token_repr is not None:
-                        token_repr = token_repr[resample_indices]
-                    if energy_gradient is not None:
-                        energy_gradient = energy_gradient[resample_indices]
-                    if h is not None:
-                        h = h[resample_indices]
-                    if g is not None:
-                        g = g[resample_indices]
+                        atom_coords = atom_coords[resample_indices]
+                        atom_coords_noisy = atom_coords_noisy[resample_indices]
+                        atom_mask = atom_mask[resample_indices]
+                        if atom_coords_denoised is not None:
+                            atom_coords_denoised = atom_coords_denoised[resample_indices]
+                        energy_traj = energy_traj[resample_indices]
+                        if (
+                            steering_args["physical_guidance_update"]
+                            or steering_args["contact_guidance_update"]
+                        ):
+                            scaled_guidance_update = scaled_guidance_update[
+                                resample_indices
+                            ]
+                        if token_repr is not None:
+                            token_repr = token_repr[resample_indices]
+                        if energy_gradient is not None:
+                            energy_gradient = energy_gradient[resample_indices]
+                        if h is not None:
+                            h = h[resample_indices]
+                        if g is not None:
+                            g = g[resample_indices]
 
             # Align noisy atom coords to denoised atom coords
             if self.alignment_reverse_diff:
@@ -628,14 +618,16 @@ class AtomDiffusion(Module):
 
             # Compute denoised over sigma
             if steering_args["gbd_steering"]:
-                denoised_over_sigma = (atom_coords_denoised - atom_coords_noisy) / t_hat - steering_args["fk_lambda"] * energy_gradient / t_hat
+                alpha = 0.8
+                denoised_over_sigma = (1 + alpha/2) * (atom_coords_denoised - atom_coords_noisy) / t_hat \
+                    - (1 + alpha / 2) * steering_args["fk_lambda"] * energy_gradient * t_hat
                 atom_coords_next = (
                     atom_coords_noisy + step_scale * (t_hat - sigma_t) * denoised_over_sigma
                 )
             elif steering_args["vm_steering"]:
-                # theta = - (g*h).mean() / ((h*h).mean() + NUM_MIN)
-                # print(theta)
-                denoised_over_sigma = (atom_coords_denoised - atom_coords_noisy) / t_hat - (1 + theta) * steering_args["fk_lambda"] * energy_gradient / t_hat
+                alpha = 0.8
+                denoised_over_sigma = (1 + alpha/2) * (atom_coords_denoised - atom_coords_noisy) / t_hat \
+                    - (1 + alpha / 2 + theta) * steering_args["fk_lambda"] * energy_gradient * t_hat
                 atom_coords_next = (
                     atom_coords_noisy + step_scale * (t_hat - sigma_t) * denoised_over_sigma
                 )

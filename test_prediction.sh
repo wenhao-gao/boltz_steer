@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# CUDA_VISIBLE_DEVICES=5 boltz predict inputs/test \
+# CUDA_VISIBLE_DEVICES=7 boltz predict inputs/test \
 #     --override \
 #     --accelerator gpu \
 #     --devices 1 \
@@ -9,7 +9,7 @@
 #     --steering_strategy no_steering \
 #     --output_format mmcif
 
-# CUDA_VISIBLE_DEVICES=5 boltz predict inputs/test \
+# CUDA_VISIBLE_DEVICES=7 boltz predict inputs/test \
 #     --override \
 #     --accelerator gpu \
 #     --devices 1 \
@@ -18,16 +18,25 @@
 #     --steering_strategy boltz \
 #     --output_format mmcif
 
-# CUDA_VISIBLE_DEVICES=5 boltz predict inputs/test \
-#     --override \
-#     --accelerator gpu \
-#     --devices 1 \
-#     --seed 1 \
-#     --out_dir outputs/test_boltz_fks \
-#     --steering_strategy fks \
-#     --output_format mmcif
+CUDA_VISIBLE_DEVICES=7 boltz predict inputs/test \
+    --override \
+    --accelerator gpu \
+    --devices 1 \
+    --seed 1 \
+    --out_dir outputs/test_boltz_gg \
+    --steering_strategy gg \
+    --output_format mmcif
 
-CUDA_VISIBLE_DEVICES=5 boltz predict inputs/test \
+CUDA_VISIBLE_DEVICES=7 boltz predict inputs/test \
+    --override \
+    --accelerator gpu \
+    --devices 1 \
+    --seed 1 \
+    --out_dir outputs/test_boltz_fks \
+    --steering_strategy fks \
+    --output_format mmcif
+
+CUDA_VISIBLE_DEVICES=7 boltz predict inputs/test \
     --override \
     --accelerator gpu \
     --devices 1 \
@@ -36,7 +45,7 @@ CUDA_VISIBLE_DEVICES=5 boltz predict inputs/test \
     --steering_strategy gbd \
     --output_format mmcif
 
-CUDA_VISIBLE_DEVICES=5 boltz predict inputs/test \
+CUDA_VISIBLE_DEVICES=7 boltz predict inputs/test \
     --override \
     --accelerator gpu \
     --devices 1 \
@@ -45,8 +54,8 @@ CUDA_VISIBLE_DEVICES=5 boltz predict inputs/test \
     --steering_strategy vm \
     --output_format mmcif
 
-# python -m scripts.eval.run_physicalsim_metrics outputs/test_boltz --num-workers 16
-# python -m scripts.eval.run_physicalsim_metrics outputs/test_boltz_steer --num-workers 16
+python -m scripts.eval.run_physicalsim_metrics outputs/test_boltz --num-workers 16
+python -m scripts.eval.run_physicalsim_metrics outputs/test_boltz_steer --num-workers 16
 python -m scripts.eval.run_physicalsim_metrics outputs/test_boltz_fks --num-workers 16
 python -m scripts.eval.run_physicalsim_metrics outputs/test_boltz_gbd --num-workers 16
 python -m scripts.eval.run_physicalsim_metrics outputs/test_boltz_vm --num-workers 16

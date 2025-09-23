@@ -168,3 +168,12 @@ boltz_results_*/
 **/*.cif
 **/*.yaml
 outputs
+outputs*
+*.out
+*.err
+*.csv
+*.tex
+run*.slurm
+run*.sh
+*.tar.gz
+picked*

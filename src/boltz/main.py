@@ -157,6 +157,8 @@ class BoltzSteeringParamsNoSteering:
     physical_guidance_update: bool = False
     contact_guidance_update: bool = False
     num_gd_steps: int = 20
+    fk_only: bool = False
+    gg_only: bool = False
 
 
 @dataclass
@@ -172,6 +174,8 @@ class BoltzSteeringParams:
     physical_guidance_update: bool = True
     contact_guidance_update: bool = True
     num_gd_steps: int = 20
+    fk_only: bool = False
+    gg_only: bool = False
 
 
 @dataclass
@@ -183,10 +187,29 @@ class SteeringParamsFKS:
     vm_steering: bool = False
     num_particles: int = 5
     fk_lambda: float = 4.0
-    fk_resampling_interval: int = 99999
+    fk_resampling_interval: int = 5
     physical_guidance_update: bool = True
     contact_guidance_update: bool = True
-    num_gd_steps: int = 0
+    num_gd_steps: int = 5
+    fk_only: bool = True
+    gg_only: bool = False
+
+
+@dataclass
+class SteeringParamsGG:
+    """Steering parameters."""
+
+    fk_steering: bool = True
+    gbd_steering: bool = False
+    vm_steering: bool = False
+    num_particles: int = 5
+    fk_lambda: float = 4.0
+    fk_resampling_interval: int = 5
+    physical_guidance_update: bool = True
+    contact_guidance_update: bool = True
+    num_gd_steps: int = 20
+    fk_only: bool = False
+    gg_only: bool = True
 
 
 @dataclass
@@ -198,11 +221,12 @@ class SteeringParamsGBD:
     vm_steering: bool = False
     num_particles: int = 5
     fk_lambda: float = 4.0
-    fk_resampling_interval: int = 99999
+    fk_resampling_interval: int = 5
     physical_guidance_update: bool = True
     contact_guidance_update: bool = True
-    num_gd_steps: int = 0
-
+    num_gd_steps: int = 20
+    fk_only: bool = False
+    gg_only: bool = False
     
 
 @dataclass
@@ -214,10 +238,12 @@ class SteeringParamsVM:
     vm_steering: bool = True
     num_particles: int = 5
     fk_lambda: float = 4.0
-    fk_resampling_interval: int = 99999
+    fk_resampling_interval: int = 5
     physical_guidance_update: bool = True
     contact_guidance_update: bool = True
-    num_gd_steps: int = 0
+    num_gd_steps: int = 20
+    fk_only: bool = False
+    gg_only: bool = False
 
 
 def get_steering_params(strategy: str) -> dict:
@@ -226,7 +252,7 @@ def get_steering_params(strategy: str) -> dict:
     Parameters
     ----------
     strategy : str
-        The steering strategy name. Options: 'no_steering', 'boltz', 'fks', 'gbd', 'vm'.
+        The steering strategy name. Options: 'no_steering', 'boltz', 'fks', 'gg', 'gbd', 'vm'.
         
     Returns
     -------
@@ -242,6 +268,7 @@ def get_steering_params(strategy: str) -> dict:
         "no_steering": BoltzSteeringParamsNoSteering(),
         "boltz": BoltzSteeringParams(),
         "fks": SteeringParamsFKS(),
+        "gg": SteeringParamsGG(),
         "gbd": SteeringParamsGBD(),
         "vm": SteeringParamsVM(),
     }
@@ -1137,7 +1164,7 @@ def cli() -> None:
 )
 @click.option(
     "--steering_strategy",
-    type=click.Choice(["no_steering", "boltz", "fks", "gbd", "vm"]),
+    type=click.Choice(["no_steering", "boltz", "fks", "gg", "gbd", "vm"]),
     help="The steering strategy to use for prediction. Options: 'no_steering', 'boltz' (BoltzSteeringParams), 'fks' (FK Steering), 'fkc' (FK Contact), 'vm' (VM). Default is 'default'.",
     default="no_steering",
 )
@@ -1179,7 +1206,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     num_subsampled_msa: int = 1024,
     no_kernels: bool = False,
     write_embeddings: bool = False,
-    steering_strategy: Literal["no_steering", "boltz", "fks", "gbd", "vm"] = "no_steering",
+    steering_strategy: Literal["no_steering", "boltz", "fks", "gg", "gbd", "vm"] = "no_steering",
 ) -> None:
     """Run predictions with Boltz."""
     # If cpu, write a friendly warning
